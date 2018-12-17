@@ -1,0 +1,385 @@
+---
+title: "PHP 2610 HW 2"
+author: "Blain Morin"
+date: "December 21, 2018"
+output: pdf_document
+header-includes:
+- \usepackage{float}
+---
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+### Set knitr options
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+### Load Required Libraries
+
+library(dplyr)
+library(MatchIt)
+library(stargazer)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(gridExtra)
+library(extrafont)
+
+### Load data
+data("lalonde")
+
+```
+
+
+## 1. Let Y denote real income in 1978 and let T denote treatment group. Fit the model:
+
+$$  E(Y|T) = \beta_0 + \beta_1 Treated $$
+
+### (a) Report the estimates of beta 0 and beta 1.
+
+```{r, results = 'asis'}
+
+### Run simple model
+
+model1 = lm(re78 ~ treat, data = lalonde)
+
+### Create Table
+stargazer(model1, header = FALSE,
+          title = "Observational Regression")
+
+
+```
+
+### (b) What does the coefficient beta 1 represent?
+
+$\beta_1$ is the average difference in real earnings between the people who had job training and those who did not. On average, the people who had job training earned $635.03 less than the people who did not have job training. 
+
+### (c) Can it be interpreted as a causal effect? Why or why not?
+
+Because our data is essentially observational, we cannot make a claim of causality here in this basic regression. We have not accounted for any confounding. There could be important differences between the control and treatment group that affect income. 
+
+## 2. Use propensity score matching to estimate the causal effect of job training. Select and justify the propensity score model and the method of matching that you ultimately decide to use. Please hand in the following:
+
+
+### (a) A description of the propensity score method, matching method, and analysis method that you use to estimate the causal effect. A few sentences is fine here.
+
+In the following sections, I use propensity score matching in order to balance the distribution of possible confounding variables in the treatment and control arms. I use the nearest neighbor method from the "MatchIt" package. After matching  one observation from the control arm to one observation from the treatment arm, I run two linear models to estimate the causal effect of treatment.  
+
+### (b) The chunk of R code (or other code) that performs the matching and carries out the analysis. Not the output here, just the code.
+
+Here is the R code that I use to perform the matching and carry out the analysis:
+
+```{r, echo = TRUE}
+
+### Nearest neighbor matching
+match.nn = matchit(treat ~ age +
+                 educ +
+                 as.factor(black) +
+                 as.factor(hispan) +
+                 as.factor(married) +
+                 as.factor(nodegree) +
+                 re74 +
+                 re75,
+               data = lalonde,
+               method = "nearest",
+               distance = "logit")
+
+
+### Get matched data
+match.nn.data = match.data(match.nn)
+
+
+### Run the model
+match.nn.model = lm(re78 ~ treat, data = match.nn.data)
+
+### Add other covariates
+match.nn.model2 = lm(re78 ~ treat + 
+                       age + 
+                       educ + 
+                       as.factor(black) + 
+                       as.factor(hispan) + 
+                       as.factor(married) + 
+                       as.factor(nodegree) + 
+                       re74 + 
+                       re75, 
+                     data = match.nn.data)
+
+```
+
+### (c) A table that shows the numbers matched and not matched, and a summary of covariate distributions in the treated and control groups. For continuous variables, the summary could be (n, mean, standard deviation), or it could be (n, median, quantiles). For binary variables it should just be n and proportion. Please no graphs for this one.
+
+
+This table displays the numbers matched and not matched:
+
+```{r, results = 'asis'}
+
+matched.table = match.nn$nn
+
+stargazer(matched.table, header = FALSE,
+          title = "Number of Observations Matched and Unmatched",
+          table.placement = 'H')
+
+```
+
+This next table shows the balance of the matched data. For the continuous variables, I present the mean and standard deviation. For the binary variables, I only present the mean (which is interpretted as the proportion):
+
+```{r, results = 'asis'}
+
+covariate.dist = match.nn.data %>%
+  select(-re78, -distance, -weights) %>%
+  group_by(treat) %>%
+  summarise_all(funs(mean, sd))
+
+covariate.dist = t(round(covariate.dist,3))
+
+covariate.dist = covariate.dist[-1,]
+
+covariate.dist = as.data.frame(covariate.dist) %>%
+  rename(Control = V1, Treated = V2)
+
+covariate.dist[17,] = c(185, 185)
+
+rownames(covariate.dist)[17] = "n"
+
+covariate.dist = covariate.dist[-(11:14),]
+
+row.names(covariate.dist) = c("Mean Age",
+                              "Mean Education",
+                              "Mean Black",
+                              "Mean Hispanic",
+                              "Mean Married",
+                              "Mean NoDegree",
+                              "Mean 74 Income",
+                              "Mean 75 Income",
+                              "sd Age",
+                              "sd Education",
+                              "sd 74 Income",
+                              "sd 75 Income",
+                              "n")
+
+stargazer(covariate.dist, header = FALSE,
+          table.placement = 'H',
+          title = "Covariate Distributions: Treatment vs Control",
+          summary = FALSE)
+
+```
+
+### (d) Output from the regression model or analysis method that you use to estimate the causal effect.
+
+For model (1), I run the same simple regression as in Question 1 with the matched data. For model (2), I include additional covariates to increase the efficiency of the model:
+
+```{r, results = 'asis'}
+
+stargazer(match.nn.model, match.nn.model2,
+          header = FALSE, table.placement = 'H',
+          title = "Regression using Matched Data")
+
+
+```
+
+### (e) Report of the estimated causal effect, its standard error, and an interpretation of what the causal effect represents.
+
+Using the regression results from model (2), the average causal effect of worker training is an $1,351.96 increase in real income (all else equal). The standard error is 790.07. The effect is significant at the .1 level.  
+
+
+## 3 G-Estimation
+
+### (a)
+
+Because the variables other than treatment and re78 are potential confounders, I use all of them in my regressions. First, I regress re78 on all the possible confounding variables using the treatment arm data. Then, I regress re78 on all the possible confounding variables using the control arm data. I then generate predictions using both models on the treatment arm data. The difference in the two predictions is the estimated causal effect. 
+
+Here is the R code for the regressions:
+
+```{r, echo = TRUE}
+
+### Regression on the treated group
+treated.model = lm(re78 ~ age + 
+                       educ + 
+                       as.factor(black) + 
+                       as.factor(hispan) + 
+                       as.factor(married) + 
+                       as.factor(nodegree) + 
+                       re74 + 
+                       re75, 
+                   data = lalonde,
+                   subset = (treat == 1))
+
+### Regression on the control group
+control.model = lm(re78 ~ age + 
+                       educ + 
+                       as.factor(black) + 
+                       as.factor(hispan) + 
+                       as.factor(married) + 
+                       as.factor(nodegree) + 
+                       re74 + 
+                       re75, 
+                   data = lalonde,
+                   subset = (treat == 0))
+
+
+```
+
+Here are the regression results for each model:
+
+```{r, results = 'asis'}
+
+### Regression table
+stargazer(treated.model, control.model, header = FALSE,
+          table.placement = 'H',
+          title = "G Estimation Regressions",
+          column.labels = c("Treated Model",
+                            "Control Model"))
+
+```
+
+Here are residual vs fitted plots for both models:
+
+```{r}
+
+### Residual vs Fitted plots
+treated.plot = ggplot(treated.model) +
+  geom_point(aes(x = .fitted, y = .resid)) +
+  ylab("Residual") +
+  xlab("Fitted Value") +
+  ggtitle("Residual vs Fitted Plot for Treatment Regression") +
+  theme_classic() +
+  theme(text=element_text(size=11,  family="CM Sans"))
+
+control.plot = ggplot(control.model) +
+  geom_point(aes(x = .fitted, y = .resid)) +
+  ylab("Residual") +
+  xlab("Fitted Value") +
+  ggtitle("Residual vs Fitted Plot for Control Regression") +
+  theme_classic() +
+  theme(text=element_text(size=11,  family="CM Sans"))
+
+grid.arrange(treated.plot, control.plot, nrow = 2)
+
+
+```
+
+There appears to be a pattern in the residuals for both the treatment regression and the control regression. This should be investigate in more detail, as we are violating some of the linear model assumptions.  
+
+### (b)
+
+Here are 10 random rows from the data with their corresponding Y1 and Y0 predictions:
+
+```{r, results = 'asis'}
+
+treatment.arm = lalonde %>%
+  filter(treat == 1) 
+
+y1 = predict(treated.model, newdata = treatment.arm)
+
+y0 = predict(control.model, newdata = treatment.arm)
+
+treatment.arm = cbind(treatment.arm, y1, y0)
+
+set.seed(10)
+for.table = sample_n(treatment.arm, size = 10)
+
+stargazer(for.table, header = FALSE,
+          summary = FALSE,
+          table.placement = 'H',
+          title = "10 Random Observations with Y1 and Y0 Predictions",
+          column.sep.width = "3pt",
+          font.size = "tiny")
+
+```
+
+### (c)
+
+Here is the R code used to calculate the causal effect:
+
+```{r, echo = TRUE}
+
+### Filter to get treatment arm
+treatment.arm = lalonde %>%
+  filter(treat == 1) 
+
+### Use treatment model to get y1
+y1 = predict(treated.model, newdata = treatment.arm)
+
+### Use control model to get y0
+y0 = predict(control.model, newdata = treatment.arm)
+
+### Calculate causal Effect
+mean(y1 - y0)
+
+
+```
+
+The estimated causal effect of worker training is a $1,647.58 average increase in real wages (all else equal).
+
+### (d) Bonus 1: Bootstrap for standard error
+
+```{r, echo = TRUE, cache = TRUE}
+
+set.seed(10)
+
+treatment.arm = lalonde %>%
+  filter(treat == 1)
+
+control.arm = lalonde %>%
+  filter(treat == 0)
+
+### Number of bootstrap replications
+sims = 1000
+
+### Initialize a vector to store results
+causal.effects = rep(NA, sims)
+
+### Bootstrap
+
+for (i in 1:sims) {
+  
+  bootstrap.sample.treat = treatment.arm %>%
+    sample_n(nrow(treatment.arm), replace = TRUE)
+  
+  bootstrap.sample.control = control.arm %>%
+    sample_n(nrow(control.arm), replace = TRUE)
+  
+  treated.model = lm(re78 ~ age + 
+                       educ + 
+                       as.factor(black) + 
+                       as.factor(hispan) + 
+                       as.factor(married) + 
+                       as.factor(nodegree) + 
+                       re74 + 
+                       re75, 
+                   data = bootstrap.sample.treat)
+  
+  control.model = lm(re78 ~ age + 
+                       educ + 
+                       as.factor(black) + 
+                       as.factor(hispan) + 
+                       as.factor(married) + 
+                       as.factor(nodegree) + 
+                       re74 + 
+                       re75, 
+                   data = bootstrap.sample.control)
+  
+  y1 = predict(treated.model, newdata = bootstrap.sample.treat)
+  y0 = predict(control.model, newdata = bootstrap.sample.treat)
+  
+  causal.effects[i] = mean(y1 - y0)
+  
+  
+  
+  
+  
+}
+
+
+
+sd(causal.effects)
+
+```
+
+We find the standard error of the G estimation estimate to be 807.08.
+
+\newpage
+
+## Appendix: R code 
+
+```{r ref.label=knitr::all_labels(), echo = T, eval = F}
+
+```
